@@ -60,7 +60,7 @@ type ProductSummary = {
 };
 
 type HandoverIssue = {
-  type: "早班交夜班" | "次日接班" | "金额核对";
+  type: "疑似未扣早班销量" | "早班交夜班" | "次日接班" | "金额核对";
   date: string;
   nextDate?: string;
   name: string;
@@ -104,6 +104,14 @@ function money(value: number) {
 
 function rowKey(row: SmokeRow, date: string) {
   return `${date}__${row.name}__${row.price}`;
+}
+
+function isMissedMorningDeduction(row: SmokeRow) {
+  return row.hasNightStock && row.morningSold > 0 && Math.abs(row.sameDayStockDiff - row.morningSold) < 0.01;
+}
+
+function missedMorningFixedEnding(row: SmokeRow) {
+  return round2(row.endingStock - row.morningSold);
 }
 
 function extractDate(sheetName: string, title: unknown, fallbackIndex: number) {
@@ -271,7 +279,13 @@ export default function Home() {
   const handovers = useMemo<HandoverIssue[]>(() => {
     const issues: HandoverIssue[] = [];
     rows.forEach((row) => {
-      if (row.hasNightStock && Math.abs(row.sameDayStockDiff) > 0.01) issues.push({ type: "早班交夜班", date: row.date, name: row.name, expected: row.sameDayExpectedNightStock, actual: row.nightStock, diff: row.sameDayStockDiff, note: "夜班库存应等于：早班库存 + 进货 - 早班售卖数量。夜班库存为空时不核对。" });
+      if (row.hasNightStock && Math.abs(row.sameDayStockDiff) > 0.01) {
+        if (isMissedMorningDeduction(row)) {
+          issues.push({ type: "疑似未扣早班销量", date: row.date, name: row.name, expected: row.sameDayExpectedNightStock, actual: row.nightStock, diff: row.sameDayStockDiff, note: "夜班库存比正确值多出的数量，正好等于早班销量。高度疑似交班时忘记扣早班售卖数量。" });
+        } else {
+          issues.push({ type: "早班交夜班", date: row.date, name: row.name, expected: row.sameDayExpectedNightStock, actual: row.nightStock, diff: row.sameDayStockDiff, note: "夜班库存应等于：早班库存 + 进货 - 早班售卖数量。夜班库存为空时不核对。" });
+        }
+      }
       if (Math.abs(row.morningAmountDiff) > 0.01) issues.push({ type: "金额核对", date: row.date, name: row.name, expected: round2(row.morningSold * row.price), actual: row.morningAmount, diff: row.morningAmountDiff, note: "早班金额不等于：早班售卖数量 × 价格" });
       if (Math.abs(row.nightAmountDiff) > 0.01) issues.push({ type: "金额核对", date: row.date, name: row.name, expected: round2(row.nightSold * row.price), actual: row.nightAmount, diff: row.nightAmountDiff, note: "夜班金额不等于：夜班售卖数量 × 价格" });
       if (Math.abs(row.totalAmountDiff) > 0.01) issues.push({ type: "金额核对", date: row.date, name: row.name, expected: round2(row.morningAmount + row.nightAmount), actual: row.totalAmount, diff: row.totalAmountDiff, note: "合计金额不等于：早班金额 + 夜班金额" });
@@ -297,6 +311,7 @@ export default function Home() {
 
   const latestDate = daily.length ? daily[daily.length - 1].date : "";
   const latestRows = rows.filter((row) => row.date === latestDate);
+  const missedMorningRows = latestRows.filter(isMissedMorningDeduction);
   const totalAmount = daily.reduce((sum, item) => sum + item.totalAmount, 0);
   const totalSold = daily.reduce((sum, item) => sum + item.totalSold, 0);
   const correctionRows = Object.values(corrections).sort((a, b) => `${a.date}-${a.name}`.localeCompare(`${b.date}-${b.name}`));
@@ -307,11 +322,23 @@ export default function Home() {
 
   function applyCorrection(row: SmokeRow, actual: number) {
     const key = rowKey(row, latestDate);
-    setCorrections((old) => ({
-      ...old,
-      [key]: { date: latestDate, name: row.name, price: row.price, before: row.endingStock, after: actual, diff: round2(actual - row.endingStock), correctedAt: new Date().toLocaleString() }
-    }));
+    setCorrections((old) => ({ ...old, [key]: { date: latestDate, name: row.name, price: row.price, before: row.endingStock, after: actual, diff: round2(actual - row.endingStock), correctedAt: new Date().toLocaleString() } }));
     setCountInput((old) => ({ ...old, [row.name]: String(actual) }));
+  }
+
+  function applyMissedMorningBatchFix() {
+    if (!missedMorningRows.length) return;
+    const ok = confirm(`检测到 ${missedMorningRows.length} 条疑似“交班忘扣早班销量”。确定批量修正吗？`);
+    if (!ok) return;
+    const now = new Date().toLocaleString();
+    setCorrections((old) => {
+      const next = { ...old };
+      missedMorningRows.forEach((row) => {
+        const after = missedMorningFixedEnding(row);
+        next[rowKey(row, latestDate)] = { date: latestDate, name: row.name, price: row.price, before: row.endingStock, after, diff: round2(after - row.endingStock), correctedAt: now };
+      });
+      return next;
+    });
   }
 
   function undoCorrection(row: SmokeRow) {
@@ -343,40 +370,21 @@ export default function Home() {
       const correction = corrections[rowKey(row, latestDate)];
       return { 日期: latestDate, 商品名称: row.name, 价格: row.price, 原应剩数量: row.endingStock, 当前应剩数量: expected, 现场实点: actual, 差异: diff, 是否已纠正: correction ? "是" : "否" };
     });
-    downloadWorkbook(`${latestDate}-现场点烟表.xlsx`, {
-      现场点烟: countRows,
-      差异商品: countRows.filter((row) => row.差异 !== "" && row.差异 !== 0),
-      纠正记录: correctionRows.length ? correctionRows.map((item) => ({ 日期: item.date, 商品名称: item.name, 价格: item.price, 原应剩: item.before, 纠正后: item.after, 纠正差异: item.diff, 纠正时间: item.correctedAt })) : [{ 说明: "暂无纠正记录" }]
-    });
+    downloadWorkbook(`${latestDate}-现场点烟表.xlsx`, { 现场点烟: countRows, 差异商品: countRows.filter((row) => row.差异 !== "" && row.差异 !== 0), 纠正记录: correctionRows.length ? correctionRows.map((item) => ({ 日期: item.date, 商品名称: item.name, 价格: item.price, 原应剩: item.before, 纠正后: item.after, 纠正差异: item.diff, 纠正时间: item.correctedAt })) : [{ 说明: "暂无纠正记录" }] });
   }
 
   return (
     <main className="min-h-screen p-4 md:p-8">
       <div className="mx-auto max-w-7xl">
-        <header className="mb-6 rounded-3xl bg-slate-900 p-6 text-white shadow-sm">
-          <p className="text-sm text-slate-300">Cigarette Report Reconciliation</p>
-          <h1 className="mt-1 text-2xl font-bold md:text-4xl">烟报自动核对助手</h1>
-          <p className="mt-2 max-w-3xl text-sm text-slate-300">按你上传的手工烟报模板解析：左侧 A-K 香烟区域，自动生成每日汇总、商品月汇总、交接异常和现场点烟清单。</p>
-        </header>
-
-        <section className="mb-6 rounded-2xl border bg-white p-5 shadow-sm">
-          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between"><div><h2 className="text-lg font-bold">导入整个月手工烟报 Excel</h2><p className="mt-1 text-sm text-slate-500">直接上传手工烟报 Excel 文件。系统会按最新日期算出当前每种烟应剩数量，方便你现场点烟。</p></div><label className="inline-flex cursor-pointer items-center justify-center rounded-xl bg-slate-900 px-4 py-3 text-sm font-medium text-white">选择烟报文件<input className="hidden" type="file" accept=".xlsx,.xls" onChange={(event) => event.target.files?.[0] && handleFile(event.target.files[0])} /></label></div>
-          {fileName ? <p className="mt-3 text-sm text-slate-600">已导入：<b>{fileName}</b>，共解析 {rows.length} 条有效香烟明细。</p> : null}
-        </section>
-
+        <header className="mb-6 rounded-3xl bg-slate-900 p-6 text-white shadow-sm"><p className="text-sm text-slate-300">Cigarette Report Reconciliation</p><h1 className="mt-1 text-2xl font-bold md:text-4xl">烟报自动核对助手</h1><p className="mt-2 max-w-3xl text-sm text-slate-300">按你上传的手工烟报模板解析：左侧 A-K 香烟区域，自动生成每日汇总、商品月汇总、交接异常和现场点烟清单。</p></header>
+        <section className="mb-6 rounded-2xl border bg-white p-5 shadow-sm"><div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between"><div><h2 className="text-lg font-bold">导入整个月手工烟报 Excel</h2><p className="mt-1 text-sm text-slate-500">直接上传手工烟报 Excel 文件。系统会按最新日期算出当前每种烟应剩数量，方便你现场点烟。</p></div><label className="inline-flex cursor-pointer items-center justify-center rounded-xl bg-slate-900 px-4 py-3 text-sm font-medium text-white">选择烟报文件<input className="hidden" type="file" accept=".xlsx,.xls" onChange={(event) => event.target.files?.[0] && handleFile(event.target.files[0])} /></label></div>{fileName ? <p className="mt-3 text-sm text-slate-600">已导入：<b>{fileName}</b>，共解析 {rows.length} 条有效香烟明细。</p> : null}</section>
         <nav className="mb-6 flex flex-wrap gap-2">{nav.map(([key, label]) => <button key={key} onClick={() => setTab(key)} className={`rounded-xl px-4 py-2 text-sm font-medium ${tab === key ? "bg-slate-900 text-white" : "bg-white text-slate-700 shadow-sm hover:bg-slate-100"}`}>{label}</button>)}</nav>
-
         {!rows.length ? <section className="rounded-2xl border bg-white p-6 shadow-sm"><h2 className="text-lg font-bold">等待导入烟报</h2><p className="mt-2 text-sm text-slate-600">请先上传手工烟报 Excel。导入后会自动显示汇总、异常和现场点烟清单。</p></section> : null}
-
         {rows.length > 0 && tab === "overview" ? <section className="space-y-6"><div className="grid gap-4 md:grid-cols-4"><Card title="日期数量" value={`${daily.length} 天`} desc={`最新日期 ${latestDate}`} /><Card title="香烟品规" value={`${productSummary.length} 个`} /><Card title="月销量" value={`${round2(totalSold)} 包`} /><Card title="月销售金额" value={`¥${money(totalAmount)}`} desc={`异常 ${handovers.length} 条，纠正 ${correctionRows.length} 条`} /></div><div className="rounded-2xl border bg-white p-5 shadow-sm"><div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between"><div><h2 className="text-lg font-bold">一键导出核对结果</h2><p className="mt-1 text-sm text-slate-500">导出后包含：每日汇总、商品月汇总、交接异常、纠正记录、原始明细。</p></div><button onClick={exportAll} className="rounded-xl bg-green-700 px-4 py-2 text-sm font-medium text-white">导出烟报汇总 Excel</button></div></div></section> : null}
-
         {rows.length > 0 && tab === "daily" ? <section className="rounded-2xl border bg-white p-5 shadow-sm"><h2 className="text-lg font-bold">每日烟报汇总</h2><div className="table-scroll mt-4"><table className="min-w-full text-sm"><thead className="bg-slate-50 text-left"><tr>{["日期", "进货", "早班销量", "夜班销量", "总销量", "早班金额", "夜班金额", "总金额", "异常"].map((h) => <th key={h} className="p-3">{h}</th>)}</tr></thead><tbody>{daily.map((item) => <tr key={item.date} className="border-t"><td className="p-3">{item.date}</td><td className="p-3">{item.purchase}</td><td className="p-3">{item.morningSold}</td><td className="p-3">{item.nightSold}</td><td className="p-3">{item.totalSold}</td><td className="p-3">¥{money(item.morningAmount)}</td><td className="p-3">¥{money(item.nightAmount)}</td><td className="p-3">¥{money(item.totalAmount)}</td><td className="p-3">{item.abnormalCount ? <Badge tone="red">{item.abnormalCount} 条</Badge> : <Badge tone="green">正常</Badge>}</td></tr>)}</tbody></table></div></section> : null}
-
         {rows.length > 0 && tab === "summary" ? <section className="rounded-2xl border bg-white p-5 shadow-sm"><h2 className="text-lg font-bold">商品月汇总</h2><div className="table-scroll mt-4"><table className="min-w-full text-sm"><thead className="bg-slate-50 text-left"><tr>{["商品", "价格", "月进货", "早班销量", "夜班销量", "月销量", "月销售金额", "月末结存"].map((h) => <th key={h} className="p-3">{h}</th>)}</tr></thead><tbody>{productSummary.map((item) => <tr key={`${item.name}-${item.price}`} className="border-t"><td className="p-3">{item.name}</td><td className="p-3">¥{money(item.price)}</td><td className="p-3">{item.purchase}</td><td className="p-3">{item.morningSold}</td><td className="p-3">{item.nightSold}</td><td className="p-3">{item.totalSold}</td><td className="p-3">¥{money(item.totalAmount)}</td><td className="p-3">{item.endingStock}</td></tr>)}</tbody></table></div></section> : null}
-
-        {rows.length > 0 && tab === "handover" ? <section className="rounded-2xl border bg-white p-5 shadow-sm"><h2 className="text-lg font-bold">交接和金额异常</h2><p className="mt-1 text-sm text-slate-500">夜班库存为空时，说明该班次未填完，不再把空白当作 0 来误报异常。</p><div className="table-scroll mt-4"><table className="min-w-full text-sm"><thead className="bg-slate-50 text-left"><tr>{["类型", "日期", "次日", "商品", "应为", "实际", "差异", "说明"].map((h) => <th key={h} className="p-3">{h}</th>)}</tr></thead><tbody>{handovers.map((item, index) => <tr key={`${item.type}-${item.date}-${item.name}-${index}`} className="border-t"><td className="p-3"><Badge tone="red">{item.type}</Badge></td><td className="p-3">{item.date}</td><td className="p-3">{item.nextDate ?? ""}</td><td className="p-3">{item.name}</td><td className="p-3">{item.expected}</td><td className="p-3">{item.actual}</td><td className="p-3">{item.diff}</td><td className="p-3">{item.note}</td></tr>)}</tbody></table></div></section> : null}
-
-        {rows.length > 0 && tab === "count" ? <section className="rounded-2xl border bg-white p-5 shadow-sm"><div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between"><div><h2 className="text-lg font-bold">现场点烟清单</h2><p className="mt-1 text-sm text-slate-500">输入现场实点数量。有差异时点“按实点纠正”，系统会把当前应剩改成实点数并记录纠正记录。</p></div><button onClick={exportOnsiteCount} className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white">导出现场点烟表</button></div><div className="table-scroll mt-4"><table className="min-w-full text-sm"><thead className="bg-slate-50 text-left"><tr>{["商品", "价格", "当前应剩", "现场实点", "差异", "状态", "纠正"].map((h) => <th key={h} className="p-3">{h}</th>)}</tr></thead><tbody>{latestRows.map((row) => { const key = rowKey(row, latestDate); const actualText = countInput[row.name] ?? ""; const actual = actualText === "" ? null : n(actualText); const expected = correctedExpected(row); const diff = actual === null ? null : round2(actual - expected); const correction = corrections[key]; return <tr key={key} className="border-t"><td className="p-3">{row.name}</td><td className="p-3">¥{money(row.price)}</td><td className="p-3 font-bold">{expected}{correction ? <div className="text-xs font-normal text-slate-500">原：{row.endingStock}</div> : null}</td><td className="p-3"><input className="w-28 rounded-xl border p-2" inputMode="decimal" value={actualText} onChange={(event) => setCountInput({ ...countInput, [row.name]: event.target.value })} /></td><td className="p-3">{diff === null ? "" : diff}</td><td className="p-3">{correction ? <Badge tone="yellow">已纠正</Badge> : diff === null ? <Badge>未点</Badge> : diff === 0 ? <Badge tone="green">正常</Badge> : <Badge tone="red">有差异</Badge>}</td><td className="p-3">{actual !== null && diff !== 0 ? <button className="rounded-lg bg-slate-900 px-3 py-1 text-xs text-white" onClick={() => applyCorrection(row, actual)}>按实点纠正</button> : null}{correction ? <button className="ml-2 rounded-lg border px-3 py-1 text-xs" onClick={() => undoCorrection(row)}>撤销</button> : null}</td></tr>; })}</tbody></table></div>{correctionRows.length ? <div className="mt-5 rounded-xl bg-yellow-50 p-4 text-sm text-yellow-900"><b>已纠正 {correctionRows.length} 条：</b>{correctionRows.map((item) => <div key={`${item.date}-${item.name}-${item.price}`}>{item.name}：{item.before} → {item.after}，差异 {item.diff}</div>)}</div> : null}</section> : null}
+        {rows.length > 0 && tab === "handover" ? <section className="rounded-2xl border bg-white p-5 shadow-sm"><h2 className="text-lg font-bold">交接和金额异常</h2><p className="mt-1 text-sm text-slate-500">如果类型显示“疑似未扣早班销量”，通常就是交班时夜班库存忘记扣早班卖掉的数量。</p><div className="table-scroll mt-4"><table className="min-w-full text-sm"><thead className="bg-slate-50 text-left"><tr>{["类型", "日期", "次日", "商品", "应为", "实际", "差异", "说明"].map((h) => <th key={h} className="p-3">{h}</th>)}</tr></thead><tbody>{handovers.map((item, index) => <tr key={`${item.type}-${item.date}-${item.name}-${index}`} className="border-t"><td className="p-3"><Badge tone={item.type === "疑似未扣早班销量" ? "yellow" : "red"}>{item.type}</Badge></td><td className="p-3">{item.date}</td><td className="p-3">{item.nextDate ?? ""}</td><td className="p-3">{item.name}</td><td className="p-3">{item.expected}</td><td className="p-3">{item.actual}</td><td className="p-3">{item.diff}</td><td className="p-3">{item.note}</td></tr>)}</tbody></table></div></section> : null}
+        {rows.length > 0 && tab === "count" ? <section className="rounded-2xl border bg-white p-5 shadow-sm"><div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between"><div><h2 className="text-lg font-bold">现场点烟清单</h2><p className="mt-1 text-sm text-slate-500">输入现场实点数量。有差异时可单独纠正；如果系统识别到整批忘扣早班销量，可一键批量修正。</p></div><button onClick={exportOnsiteCount} className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white">导出现场点烟表</button></div>{missedMorningRows.length ? <div className="mt-4 rounded-xl bg-yellow-50 p-4 text-sm text-yellow-900"><b>检测到 {missedMorningRows.length} 条疑似交班忘扣早班销量。</b><div className="mt-1">系统判断依据：夜班库存比正确值多出的数量，正好等于早班售卖数量。</div><button className="mt-3 rounded-lg bg-yellow-700 px-4 py-2 text-sm text-white" onClick={applyMissedMorningBatchFix}>一键按早班销量批量修正</button></div> : null}<div className="table-scroll mt-4"><table className="min-w-full text-sm"><thead className="bg-slate-50 text-left"><tr>{["商品", "价格", "当前应剩", "现场实点", "差异", "状态", "纠正"].map((h) => <th key={h} className="p-3">{h}</th>)}</tr></thead><tbody>{latestRows.map((row) => { const key = rowKey(row, latestDate); const actualText = countInput[row.name] ?? ""; const actual = actualText === "" ? null : n(actualText); const expected = correctedExpected(row); const diff = actual === null ? null : round2(actual - expected); const correction = corrections[key]; return <tr key={key} className="border-t"><td className="p-3">{row.name}{isMissedMorningDeduction(row) ? <div className="text-xs text-yellow-700">疑似未扣早班销量</div> : null}</td><td className="p-3">¥{money(row.price)}</td><td className="p-3 font-bold">{expected}{correction ? <div className="text-xs font-normal text-slate-500">原：{row.endingStock}</div> : null}</td><td className="p-3"><input className="w-28 rounded-xl border p-2" inputMode="decimal" value={actualText} onChange={(event) => setCountInput({ ...countInput, [row.name]: event.target.value })} /></td><td className="p-3">{diff === null ? "" : diff}</td><td className="p-3">{correction ? <Badge tone="yellow">已纠正</Badge> : diff === null ? <Badge>未点</Badge> : diff === 0 ? <Badge tone="green">正常</Badge> : <Badge tone="red">有差异</Badge>}</td><td className="p-3">{actual !== null && diff !== 0 ? <button className="rounded-lg bg-slate-900 px-3 py-1 text-xs text-white" onClick={() => applyCorrection(row, actual)}>按实点纠正</button> : null}{correction ? <button className="ml-2 rounded-lg border px-3 py-1 text-xs" onClick={() => undoCorrection(row)}>撤销</button> : null}</td></tr>; })}</tbody></table></div>{correctionRows.length ? <div className="mt-5 rounded-xl bg-yellow-50 p-4 text-sm text-yellow-900"><b>已纠正 {correctionRows.length} 条：</b>{correctionRows.map((item) => <div key={`${item.date}-${item.name}-${item.price}`}>{item.name}：{item.before} → {item.after}，差异 {item.diff}</div>)}</div> : null}</section> : null}
       </div>
     </main>
   );
