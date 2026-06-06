@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import * as XLSX from "xlsx";
 
-type Tab = "overview" | "daily" | "summary" | "handover" | "stock";
+type Tab = "overview" | "daily" | "summary" | "handover" | "count";
 
 type SmokeRow = {
   date: string;
@@ -75,7 +75,7 @@ const nav: Array<[Tab, string]> = [
   ["daily", "每日烟报"],
   ["summary", "商品月汇总"],
   ["handover", "交接核对"],
-  ["stock", "每周盘点"]
+  ["count", "现场点烟"]
 ];
 
 function hasValue(value: unknown) {
@@ -311,15 +311,15 @@ export default function Home() {
     });
   }
 
-  function exportStockCount() {
+  function exportOnsiteCount() {
     if (!latestRows.length) return;
-    const stockRows = latestRows.map((row) => {
+    const countRows = latestRows.map((row) => {
       const actualText = countInput[row.name] ?? "";
       const actual = actualText === "" ? "" : n(actualText);
       const diff = actual === "" ? "" : round2(Number(actual) - row.endingStock);
-      return { 日期: latestDate, 商品名称: row.name, 价格: row.price, 系统结存: row.endingStock, 实盘库存: actual, 差异: diff };
+      return { 日期: latestDate, 商品名称: row.name, 价格: row.price, 应剩数量: row.endingStock, 现场实点: actual, 差异: diff };
     });
-    downloadWorkbook(`${latestDate}-香烟盘点表.xlsx`, { 香烟盘点: stockRows, 差异商品: stockRows.filter((row) => row.差异 !== "" && row.差异 !== 0) });
+    downloadWorkbook(`${latestDate}-现场点烟表.xlsx`, { 现场点烟: countRows, 差异商品: countRows.filter((row) => row.差异 !== "" && row.差异 !== 0) });
   }
 
   return (
@@ -328,14 +328,14 @@ export default function Home() {
         <header className="mb-6 rounded-3xl bg-slate-900 p-6 text-white shadow-sm">
           <p className="text-sm text-slate-300">Cigarette Report Reconciliation</p>
           <h1 className="mt-1 text-2xl font-bold md:text-4xl">烟报自动核对助手</h1>
-          <p className="mt-2 max-w-3xl text-sm text-slate-300">按你上传的手工烟报模板解析：左侧 A-K 香烟区域，自动生成每日汇总、商品月汇总、交接异常和盘点表。</p>
+          <p className="mt-2 max-w-3xl text-sm text-slate-300">按你上传的手工烟报模板解析：左侧 A-K 香烟区域，自动生成每日汇总、商品月汇总、交接异常和现场点烟清单。</p>
         </header>
 
         <section className="mb-6 rounded-2xl border bg-white p-5 shadow-sm">
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <div>
               <h2 className="text-lg font-bold">导入整个月手工烟报 Excel</h2>
-              <p className="mt-1 text-sm text-slate-500">直接上传手工烟报 Excel 文件。夜班库存没填时，系统不会误判为 0 库存异常。</p>
+              <p className="mt-1 text-sm text-slate-500">直接上传手工烟报 Excel 文件。系统会按最新日期算出当前每种烟应剩数量，方便你现场点烟。</p>
             </div>
             <label className="inline-flex cursor-pointer items-center justify-center rounded-xl bg-slate-900 px-4 py-3 text-sm font-medium text-white">
               选择烟报文件
@@ -349,7 +349,7 @@ export default function Home() {
           {nav.map(([key, label]) => <button key={key} onClick={() => setTab(key)} className={`rounded-xl px-4 py-2 text-sm font-medium ${tab === key ? "bg-slate-900 text-white" : "bg-white text-slate-700 shadow-sm hover:bg-slate-100"}`}>{label}</button>)}
         </nav>
 
-        {!rows.length ? <section className="rounded-2xl border bg-white p-6 shadow-sm"><h2 className="text-lg font-bold">等待导入烟报</h2><p className="mt-2 text-sm text-slate-600">请先上传手工烟报 Excel。导入后会自动显示汇总和异常。</p></section> : null}
+        {!rows.length ? <section className="rounded-2xl border bg-white p-6 shadow-sm"><h2 className="text-lg font-bold">等待导入烟报</h2><p className="mt-2 text-sm text-slate-600">请先上传手工烟报 Excel。导入后会自动显示汇总、异常和现场点烟清单。</p></section> : null}
 
         {rows.length > 0 && tab === "overview" ? <section className="space-y-6"><div className="grid gap-4 md:grid-cols-4"><Card title="日期数量" value={`${daily.length} 天`} desc={`最新日期 ${latestDate}`} /><Card title="香烟品规" value={`${productSummary.length} 个`} /><Card title="月销量" value={`${round2(totalSold)} 包`} /><Card title="月销售金额" value={`¥${money(totalAmount)}`} desc={`异常 ${handovers.length} 条`} /></div><div className="rounded-2xl border bg-white p-5 shadow-sm"><div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between"><div><h2 className="text-lg font-bold">一键导出核对结果</h2><p className="mt-1 text-sm text-slate-500">导出后包含：每日汇总、商品月汇总、交接异常、原始明细。</p></div><button onClick={exportAll} className="rounded-xl bg-green-700 px-4 py-2 text-sm font-medium text-white">导出烟报汇总 Excel</button></div></div></section> : null}
 
@@ -359,7 +359,7 @@ export default function Home() {
 
         {rows.length > 0 && tab === "handover" ? <section className="rounded-2xl border bg-white p-5 shadow-sm"><h2 className="text-lg font-bold">交接和金额异常</h2><p className="mt-1 text-sm text-slate-500">夜班库存为空时，说明该班次未填完，不再把空白当作 0 来误报异常。</p><div className="table-scroll mt-4"><table className="min-w-full text-sm"><thead className="bg-slate-50 text-left"><tr>{["类型", "日期", "次日", "商品", "应为", "实际", "差异", "说明"].map((h) => <th key={h} className="p-3">{h}</th>)}</tr></thead><tbody>{handovers.map((item, index) => <tr key={`${item.type}-${item.date}-${item.name}-${index}`} className="border-t"><td className="p-3"><Badge tone="red">{item.type}</Badge></td><td className="p-3">{item.date}</td><td className="p-3">{item.nextDate ?? ""}</td><td className="p-3">{item.name}</td><td className="p-3">{item.expected}</td><td className="p-3">{item.actual}</td><td className="p-3">{item.diff}</td><td className="p-3">{item.note}</td></tr>)}</tbody></table></div></section> : null}
 
-        {rows.length > 0 && tab === "stock" ? <section className="rounded-2xl border bg-white p-5 shadow-sm"><div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between"><div><h2 className="text-lg font-bold">每周香烟盘点</h2><p className="mt-1 text-sm text-slate-500">默认用最新日期 {latestDate} 的当前结存作为系统库存。夜班未填时，用早班库存 + 进货 - 早班售卖作为当前结存。</p></div><button onClick={exportStockCount} className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white">导出盘点表</button></div><div className="table-scroll mt-4"><table className="min-w-full text-sm"><thead className="bg-slate-50 text-left"><tr>{["商品", "价格", "系统结存", "实盘库存", "差异", "状态"].map((h) => <th key={h} className="p-3">{h}</th>)}</tr></thead><tbody>{latestRows.map((row) => { const actualText = countInput[row.name] ?? ""; const actual = actualText === "" ? null : n(actualText); const diff = actual === null ? null : round2(actual - row.endingStock); return <tr key={row.name} className="border-t"><td className="p-3">{row.name}</td><td className="p-3">¥{money(row.price)}</td><td className="p-3">{row.endingStock}</td><td className="p-3"><input className="w-28 rounded-xl border p-2" inputMode="decimal" value={actualText} onChange={(event) => setCountInput({ ...countInput, [row.name]: event.target.value })} /></td><td className="p-3">{diff === null ? "" : diff}</td><td className="p-3">{diff === null ? <Badge>未盘</Badge> : diff === 0 ? <Badge tone="green">正常</Badge> : <Badge tone="red">有差异</Badge>}</td></tr>; })}</tbody></table></div></section> : null}
+        {rows.length > 0 && tab === "count" ? <section className="rounded-2xl border bg-white p-5 shadow-sm"><div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between"><div><h2 className="text-lg font-bold">现场点烟清单</h2><p className="mt-1 text-sm text-slate-500">系统用最新日期 {latestDate} 计算每种烟现在应剩多少。你现场输入实际点到的数量，马上显示差异。</p></div><button onClick={exportOnsiteCount} className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white">导出现场点烟表</button></div><div className="table-scroll mt-4"><table className="min-w-full text-sm"><thead className="bg-slate-50 text-left"><tr>{["商品", "价格", "应剩数量", "现场实点", "差异", "状态"].map((h) => <th key={h} className="p-3">{h}</th>)}</tr></thead><tbody>{latestRows.map((row) => { const actualText = countInput[row.name] ?? ""; const actual = actualText === "" ? null : n(actualText); const diff = actual === null ? null : round2(actual - row.endingStock); return <tr key={row.name} className="border-t"><td className="p-3">{row.name}</td><td className="p-3">¥{money(row.price)}</td><td className="p-3 font-bold">{row.endingStock}</td><td className="p-3"><input className="w-28 rounded-xl border p-2" inputMode="decimal" value={actualText} onChange={(event) => setCountInput({ ...countInput, [row.name]: event.target.value })} /></td><td className="p-3">{diff === null ? "" : diff}</td><td className="p-3">{diff === null ? <Badge>未点</Badge> : diff === 0 ? <Badge tone="green">正常</Badge> : <Badge tone="red">有差异</Badge>}</td></tr>; })}</tbody></table></div></section> : null}
       </div>
     </main>
   );
