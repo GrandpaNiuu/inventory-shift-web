@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "库存盘点与班次对账助手",
-  description: "早班晚班账表合并核对、月度报表导出、每周库存盘点自动化。"
+  title: "烟报自动核对助手",
+  description: "导入手工烟报，自动生成每日汇总、月度汇总、交接异常和每周盘点表。"
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
