@@ -70,7 +70,13 @@ type HandoverIssue = {
   note: string;
 };
 
-const nav: Array<[Tab, string]> = [["overview", "总览"], ["daily", "每日烟报"], ["summary", "商品月汇总"], ["handover", "交接核对"], ["stock", "每周盘点"]];
+const nav: Array<[Tab, string]> = [
+  ["overview", "总览"],
+  ["daily", "每日烟报"],
+  ["summary", "商品月汇总"],
+  ["handover", "交接核对"],
+  ["stock", "每周盘点"]
+];
 
 function hasValue(value: unknown) {
   return value !== null && value !== undefined && String(value).trim() !== "";
@@ -96,6 +102,7 @@ function extractDate(sheetName: string, title: unknown, fallbackIndex: number) {
   const raw = `${String(title ?? "")} ${sheetName}`;
   const full = raw.match(/(20\d{2}|19\d{2})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日?/);
   if (full) return `${full[1]}-${full[2].padStart(2, "0")}-${full[3].padStart(2, "0")}`;
+
   const yearMonth = raw.match(/(20\d{2}|19\d{2})\s*年\s*(\d{1,2})\s*月/);
   const numericSheet = sheetName.match(/^(\d{1,2})$/);
   const day = numericSheet ? Number(numericSheet[1]) : fallbackIndex + 1;
@@ -110,9 +117,9 @@ function parseWorkbook(workbook: XLSX.WorkBook) {
   workbook.SheetNames.forEach((sheetName, sheetIndex) => {
     const sheet = workbook.Sheets[sheetName];
     if (!sheet) return;
+
     const grid = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: null });
     const date = extractDate(sheetName, grid[0]?.[0], sheetIndex);
-    const sheetRows: SmokeRow[] = [];
 
     for (let i = 3; i < Math.min(grid.length, 90); i += 1) {
       const row = grid[i] ?? [];
@@ -154,7 +161,7 @@ function parseWorkbook(workbook: XLSX.WorkBook) {
       const sameDayExpectedNightStock = round2(morningStock + purchase - morningSold);
       const endingStock = hasNightStock ? round2(nightStock - nightSold) : sameDayExpectedNightStock;
 
-      sheetRows.push({
+      parsed.push({
         date,
         sheetName,
         rowNumber: i + 1,
@@ -185,8 +192,6 @@ function parseWorkbook(workbook: XLSX.WorkBook) {
         hasTotalAmount
       });
     }
-
-    parsed.push(...sheetRows);
   });
 
   return parsed.sort((a, b) => `${a.date}-${a.rowNumber}`.localeCompare(`${b.date}-${b.rowNumber}`));
@@ -198,12 +203,18 @@ function hasRowIssue(row: SmokeRow) {
 
 function downloadWorkbook(fileName: string, sheets: Record<string, Record<string, unknown>[]>) {
   const workbook = XLSX.utils.book_new();
-  Object.entries(sheets).forEach(([name, rows]) => XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(rows), name.slice(0, 31)));
+  Object.entries(sheets).forEach(([name, sheetRows]) => XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(sheetRows), name.slice(0, 31)));
   XLSX.writeFile(workbook, fileName);
 }
 
 function Card({ title, value, desc }: { title: string; value: string; desc?: string }) {
-  return <div className="rounded-2xl border bg-white p-5 shadow-sm"><div className="text-sm text-slate-500">{title}</div><div className="mt-2 text-2xl font-bold text-slate-900">{value}</div>{desc ? <div className="mt-1 text-xs text-slate-500">{desc}</div> : null}</div>;
+  return (
+    <div className="rounded-2xl border bg-white p-5 shadow-sm">
+      <div className="text-sm text-slate-500">{title}</div>
+      <div className="mt-2 text-2xl font-bold text-slate-900">{value}</div>
+      {desc ? <div className="mt-1 text-xs text-slate-500">{desc}</div> : null}
+    </div>
+  );
 }
 
 function Badge({ children, tone = "gray" }: { children: React.ReactNode; tone?: "gray" | "green" | "red" | "yellow" }) {
@@ -220,8 +231,7 @@ export default function Home() {
   async function handleFile(file: File) {
     const buffer = await file.arrayBuffer();
     const workbook = XLSX.read(buffer, { type: "array", cellDates: true });
-    const parsed = parseWorkbook(workbook);
-    setRows(parsed);
+    setRows(parseWorkbook(workbook));
     setFileName(file.name);
     setCountInput({});
   }
@@ -325,14 +335,19 @@ export default function Home() {
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <div>
               <h2 className="text-lg font-bold">导入整个月手工烟报 Excel</h2>
-              <p className="mt-1 text-sm text-slate-500">直接上传类似“6月手工烟报.xlsx”的文件。夜班库存没填时，系统不会误判为 0 库存异常。</p>
+              <p className="mt-1 text-sm text-slate-500">直接上传手工烟报 Excel 文件。夜班库存没填时，系统不会误判为 0 库存异常。</p>
             </div>
-            <label className="inline-flex cursor-pointer items-center justify-center rounded-xl bg-slate-900 px-4 py-3 text-sm font-medium text-white">选择烟报文件<input className="hidden" type="file" accept=".xlsx,.xls" onChange={(event) => event.target.files?.[0] && handleFile(event.target.files[0])} /></label>
+            <label className="inline-flex cursor-pointer items-center justify-center rounded-xl bg-slate-900 px-4 py-3 text-sm font-medium text-white">
+              选择烟报文件
+              <input className="hidden" type="file" accept=".xlsx,.xls" onChange={(event) => event.target.files?.[0] && handleFile(event.target.files[0])} />
+            </label>
           </div>
           {fileName ? <p className="mt-3 text-sm text-slate-600">已导入：<b>{fileName}</b>，共解析 {rows.length} 条有效香烟明细。</p> : null}
         </section>
 
-        <nav className="mb-6 flex flex-wrap gap-2">{nav.map(([key, label]) => <button key={key} onClick={() => setTab(key)} className={`rounded-xl px-4 py-2 text-sm font-medium ${tab === key ? "bg-slate-900 text-white" : "bg-white text-slate-700 shadow-sm hover:bg-slate-100"}`}>{label}</button>)}</nav>
+        <nav className="mb-6 flex flex-wrap gap-2">
+          {nav.map(([key, label]) => <button key={key} onClick={() => setTab(key)} className={`rounded-xl px-4 py-2 text-sm font-medium ${tab === key ? "bg-slate-900 text-white" : "bg-white text-slate-700 shadow-sm hover:bg-slate-100"}`}>{label}</button>)}
+        </nav>
 
         {!rows.length ? <section className="rounded-2xl border bg-white p-6 shadow-sm"><h2 className="text-lg font-bold">等待导入烟报</h2><p className="mt-2 text-sm text-slate-600">请先上传手工烟报 Excel。导入后会自动显示汇总和异常。</p></section> : null}
 
