@@ -5,7 +5,7 @@
 1. 每个月把早班账表和晚班账表自动合并成一张月度对账表。
 2. 每周生成库存盘点清单，录入实盘数量后自动计算差异并导出盘点表。
 
-> 当前版本优先保证流程跑通。数据暂时保存在浏览器 localStorage，适合先部署到 Vercel 做功能测试。后续如果要多人同时使用，需要接 Supabase 数据库。
+> 当前版本优先保证流程跑通。数据暂时保存在浏览器 localStorage，适合先部署成网页测试。后续如果要多人同时使用，需要接 Supabase 数据库。
 
 ## 已完成的第一版功能
 
@@ -67,7 +67,31 @@ npm run dev
 http://localhost:3000
 ```
 
-## 部署到 Vercel
+## 推荐上线方式：GitHub Pages
+
+项目已经配置为静态导出，适合部署到 GitHub Pages。
+
+预期访问地址：
+
+```text
+https://grandpaniuu.github.io/inventory-shift-web/
+```
+
+如果页面没有自动出现，需要在 GitHub 仓库里打开：
+
+```text
+Settings → Pages → Build and deployment → Source
+```
+
+然后选择：
+
+```text
+GitHub Actions
+```
+
+如果你不会操作，把 GitHub Pages 设置页面截图发出来，我继续按截图告诉你点哪里。
+
+## 也可以部署到 Vercel
 
 1. 打开 Vercel。
 2. 选择 Import Git Repository。
