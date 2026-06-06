@@ -1,5 +1,5 @@
-import InventoryPage from "./InventoryPage";
+import InventoryPageOrdered from "./InventoryPageOrdered";
 
 export default function Home() {
-  return <InventoryPage />;
+  return <InventoryPageOrdered />;
 }
