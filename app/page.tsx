@@ -3,9 +3,10 @@
 import { useMemo, useState, type ChangeEvent, type ReactNode } from "react";
 import * as XLSX from "xlsx";
 
-type Tab = "overview" | "daily" | "summary" | "handover" | "count";
+type Tab = "overview" | "daily" | "summary" | "handover" | "count" | "payment";
 type IssueType = "疑似未扣早班销量" | "早班交夜班" | "次日接班" | "金额核对";
 type CardTone = "default" | "danger";
+type PaymentShift = "早班" | "夜班" | "合计" | "未知";
 
 type StockRow = {
   date: string;
@@ -64,6 +65,32 @@ type ProductSummary = {
   endingStock: number;
 };
 
+type CategorySummary = {
+  category: string;
+  totalSold: number;
+  totalAmount: number;
+  count: number;
+};
+
+type PaymentRecord = {
+  date: string;
+  sheetName: string;
+  shift: PaymentShift;
+  channel: string;
+  amount: number;
+};
+
+type PaymentDailySummary = {
+  date: string;
+  totals: Record<string, number>;
+  total: number;
+};
+
+type PaymentSummary = {
+  channel: string;
+  amount: number;
+};
+
 type WriteBackTarget = {
   key: string;
   date: string;
@@ -115,10 +142,33 @@ type CellWithStyle = XLSX.CellObject & {
   w?: string;
 };
 
-const nav: Array<[Tab, string]> = [["overview", "总览"], ["daily", "每日报表"], ["summary", "商品月汇总"], ["handover", "交接核对"], ["count", "现场盘点"]];
+type TableGroup = {
+  headerRow: number;
+  startCol: number;
+  noCol: number;
+  nameCol: number;
+  priceCol: number;
+  purchaseCol: number;
+  morningStockCol: number;
+  morningSoldCol: number;
+  morningAmountCol: number;
+  nightStockCol: number;
+  nightSoldCol: number;
+  nightAmountCol: number;
+  totalAmountCol: number;
+  defaultCategory: string;
+};
+
+type ParsedWorkbook = {
+  rows: StockRow[];
+  payments: PaymentRecord[];
+};
+
+const nav: Array<[Tab, string]> = [["overview", "总览"], ["daily", "每日报表"], ["summary", "商品总汇"], ["handover", "交接核对"], ["count", "现场盘点"], ["payment", "收款统计"]];
 const STORE_NAME = "SY11";
 const DEFAULT_CATEGORY = "杂项";
 const CIGARETTE_CATEGORY = "香烟(酒店库存)";
+const PAYMENT_CHANNELS = ["小Y", "现金", "微信", "扫码盒子", "支付宝"];
 const MORNING_STOCK_COLUMN = 4; // E列：早班库存
 const NIGHT_STOCK_COLUMN = 7; // H列：夜班库存
 const HEADER_STYLE = { font: { bold: true }, alignment: { horizontal: "center", vertical: "center" }, fill: { fgColor: { rgb: "E2E8F0" } } };
@@ -138,14 +188,16 @@ function correctedNightStock(row: StockRow) { return row.sameDayExpectedNightSto
 function safeFileName(name: string) { return name.replace(/\.xlsx?$/i, "").replace(/[\\/:*?\"<>|]/g, "-"); }
 function reportDateRange(daily: DailySummary[]) { if (!daily.length) return ""; return daily.length === 1 ? daily[0].date : `${daily[0].date} 至 ${daily[daily.length - 1].date}`; }
 function queryTime() { return new Date().toLocaleString("zh-CN", { hour12: false }); }
+function text(value: unknown) { return String(value ?? "").trim(); }
+function rowText(row: unknown[] | undefined) { return (row ?? []).map((cell) => text(cell)).filter(Boolean).join(" "); }
 
-function inferCategoryFromText(text: string) {
-  const value = text.replace(/\s/g, "");
+function inferCategoryFromText(source: string) {
+  const value = source.replace(/\s/g, "");
   if (!value) return null;
   if (/打火机|火机|火柴|点烟器/i.test(value)) return "打火机";
-  if (/饮料|矿泉水|纯净水|可乐|雪碧|芬达|苏打水|气泡水|红牛|东鹏|脉动|外星人|农夫山泉|怡宝|百岁山|王老吉|加多宝|茶饮|冰红茶|绿茶|乌龙茶|咖啡|牛奶|酸奶|椰汁|果汁|柠檬茶/i.test(value)) return "饮料";
-  if (/杂项|其他|小商品|日用品|百货|纸巾|扑克牌|牙刷|牙膏|剃须|充电器|数据线|雨伞/i.test(value)) return DEFAULT_CATEGORY;
-  if (/香烟|卷烟|烟草|烟品|中华|芙蓉王|利群|玉溪|黄鹤楼|云烟|南京|双喜|红塔山|白沙|娇子|黄金叶|苏烟|泰山|七匹狼|中南海|牡丹|贵烟|真龙|钻石|煊赫门|万宝路|黄山|长白山|延安|兰州|宽窄|荷花|天子|红河|红金龙|金圣|人民大会堂|细支|中支/i.test(value)) return CIGARETTE_CATEGORY;
+  if (/饮料|矿泉水|纯净水|可乐|雪碧|芬达|苏打水|气泡水|红牛|东鹏|脉动|外星人|农夫山泉|怡宝|百岁山|王老吉|加多宝|茶饮|冰红茶|绿茶|乌龙茶|咖啡|牛奶|酸奶|椰汁|果汁|柠檬茶|阿萨姆|海之言|娃哈哈|康师傅.*茶|康师傅.*水|康师傅.*奶茶/i.test(value)) return "饮料";
+  if (/杂项|其他|小商品|日用品|百货|纸巾|扑克牌|牙刷|牙膏|剃须|充电器|数据线|雨伞|方便面|泡面|螺蛳粉|零食|口香糖/i.test(value)) return DEFAULT_CATEGORY;
+  if (/烟报|香烟|卷烟|烟草|烟品|中华|芙蓉王|利群|玉溪|黄鹤楼|云烟|南京|双喜|红塔山|白沙|娇子|黄金叶|苏烟|泰山|七匹狼|中南海|牡丹|贵烟|真龙|钻石|煊赫门|万宝路|黄山|长白山|延安|兰州|宽窄|荷花|天子|红河|红金龙|金圣|人民大会堂|细支|中支/i.test(value)) return CIGARETTE_CATEGORY;
   return null;
 }
 
@@ -161,43 +213,121 @@ function extractDate(sheetName: string, title: unknown, fallbackIndex: number) {
   return `${year}-${month.padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
-function parseWorkbook(workbook: XLSX.WorkBook) {
-  const parsed: StockRow[] = [];
+function groupDefaultCategory(grid: unknown[][], headerRow: number, startCol: number, endCol: number, sheetName: string) {
+  const samples: string[] = [sheetName];
+  for (let r = 0; r <= headerRow; r += 1) {
+    for (let c = startCol; c <= endCol; c += 1) samples.push(text(grid[r]?.[c]));
+  }
+  return inferCategoryFromText(samples.join(" ")) ?? DEFAULT_CATEGORY;
+}
+
+function findTableGroups(grid: unknown[][], sheetName: string) {
+  const groups: TableGroup[] = [];
+  const seen = new Set<string>();
+  grid.forEach((row, headerRow) => {
+    row.forEach((cell, col) => {
+      const header = text(cell);
+      const priceHeader = text(row[col + 1]);
+      if (!/^(商品名称|售卖商品)$/.test(header) || !/^(价格|售价)$/.test(priceHeader)) return;
+      const startCol = Math.max(0, col - 1);
+      const key = `${headerRow}_${startCol}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      groups.push({
+        headerRow,
+        startCol,
+        noCol: startCol,
+        nameCol: col,
+        priceCol: col + 1,
+        purchaseCol: col + 2,
+        morningStockCol: col + 3,
+        morningSoldCol: col + 4,
+        morningAmountCol: col + 5,
+        nightStockCol: col + 6,
+        nightSoldCol: col + 7,
+        nightAmountCol: col + 8,
+        totalAmountCol: col + 9,
+        defaultCategory: groupDefaultCategory(grid, headerRow, startCol, col + 9, sheetName)
+      });
+    });
+  });
+  return groups;
+}
+
+function isSummaryLikeName(name: string) {
+  return /合计|收款|备注|售卖金额|售卖数量|渠道|小计|总计/.test(name);
+}
+
+function paymentShiftFromContext(grid: unknown[][], rowIndex: number) {
+  const context = `${rowText(grid[rowIndex - 2])} ${rowText(grid[rowIndex - 1])} ${rowText(grid[rowIndex])}`;
+  if (/早班/.test(context)) return "早班" as PaymentShift;
+  if (/夜班/.test(context)) return "夜班" as PaymentShift;
+  if (/合计售卖金额|总计|合计/.test(context)) return "合计" as PaymentShift;
+  return "未知" as PaymentShift;
+}
+
+function parsePaymentRecords(grid: unknown[][], sheetName: string, date: string) {
+  const records: PaymentRecord[] = [];
+  grid.forEach((row, rowIndex) => {
+    row.forEach((cell, col) => {
+      if (text(cell) !== "收款渠道") return;
+      const shift = paymentShiftFromContext(grid, rowIndex);
+      for (let c = col + 1; c < Math.min(row.length, col + 12); c += 2) {
+        const channel = text(row[c]).replace(/\s/g, "");
+        if (!PAYMENT_CHANNELS.includes(channel)) continue;
+        records.push({ date, sheetName, shift, channel, amount: round2(n(row[c + 1])) });
+      }
+    });
+  });
+  return records;
+}
+
+function parseWorkbook(workbook: XLSX.WorkBook): ParsedWorkbook {
+  const parsedRows: StockRow[] = [];
+  const payments: PaymentRecord[] = [];
+
   workbook.SheetNames.forEach((sheetName, sheetIndex) => {
     const sheet = workbook.Sheets[sheetName];
     if (!sheet) return;
     const grid = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: null });
     const date = extractDate(sheetName, grid[0]?.[0], sheetIndex);
-    let currentCategory = inferCategoryFromText(`${sheetName} ${String(grid[0]?.[0] ?? "")}`) ?? CIGARETTE_CATEGORY;
+    const groups = findTableGroups(grid, sheetName);
+    payments.push(...parsePaymentRecords(grid, sheetName, date));
 
-    for (let i = 3; i < grid.length; i += 1) {
-      const row = grid[i] ?? [];
-      const rowText = row.map((cell) => String(cell ?? "")).join(" ");
-      const rowCategory = inferCategoryFromText(rowText);
-      const name = String(row[1] ?? "").trim();
-      const price = n(row[2]);
-      if (rowCategory && (!name || !price || /分类|类别|品类|小计|合计|库存|销售|报表/.test(rowText))) currentCategory = rowCategory;
-      if (!name || !price) continue;
-      if (name.includes("合计") || name.includes("收款")) continue;
+    groups.forEach((group) => {
+      let currentCategory = group.defaultCategory;
+      for (let i = group.headerRow + 1; i < grid.length; i += 1) {
+        const row = grid[i] ?? [];
+        const lineText = rowText(row.slice(group.startCol, group.totalAmountCol + 1));
+        const lineCategory = inferCategoryFromText(lineText);
+        const name = text(row[group.nameCol]);
+        const price = n(row[group.priceCol]);
+        if (lineCategory && (!name || !price || /分类|类别|品类|小计|合计|库存|销售|报表/.test(lineText))) currentCategory = lineCategory;
+        if (!name || !price || isSummaryLikeName(name)) continue;
 
-      const category = inferCategoryFromText(name) ?? currentCategory ?? DEFAULT_CATEGORY;
-      const purchaseRaw = row[3], morningStockRaw = row[4], morningSoldRaw = row[5], morningAmountRaw = row[6], nightStockRaw = row[7], nightSoldRaw = row[8], nightAmountRaw = row[9], totalAmountRaw = row[10];
-      const purchase = n(purchaseRaw), morningStock = n(morningStockRaw), morningSold = n(morningSoldRaw), nightStock = n(nightStockRaw), nightSold = n(nightSoldRaw);
-      const hasPurchase = hasValue(purchaseRaw), hasMorningStock = hasValue(morningStockRaw), hasMorningSold = hasValue(morningSoldRaw), hasNightStock = hasValue(nightStockRaw), hasNightSold = hasValue(nightSoldRaw);
-      const hasMorningAmount = hasValue(morningAmountRaw) && n(morningAmountRaw) !== 0, hasNightAmount = hasValue(nightAmountRaw) && n(nightAmountRaw) !== 0, hasTotalAmount = hasValue(totalAmountRaw) && n(totalAmountRaw) !== 0;
-      const active = hasPurchase || hasMorningStock || hasMorningSold || hasNightStock || hasNightSold || hasMorningAmount || hasNightAmount || hasTotalAmount;
-      if (!active) continue;
+        const category = inferCategoryFromText(name) ?? currentCategory ?? DEFAULT_CATEGORY;
+        const purchaseRaw = row[group.purchaseCol], morningStockRaw = row[group.morningStockCol], morningSoldRaw = row[group.morningSoldCol], morningAmountRaw = row[group.morningAmountCol], nightStockRaw = row[group.nightStockCol], nightSoldRaw = row[group.nightSoldCol], nightAmountRaw = row[group.nightAmountCol], totalAmountRaw = row[group.totalAmountCol];
+        const purchase = n(purchaseRaw), morningStock = n(morningStockRaw), morningSold = n(morningSoldRaw), nightStock = n(nightStockRaw), nightSold = n(nightSoldRaw);
+        const hasPurchase = hasValue(purchaseRaw), hasMorningStock = hasValue(morningStockRaw), hasMorningSold = hasValue(morningSoldRaw), hasNightStock = hasValue(nightStockRaw), hasNightSold = hasValue(nightSoldRaw);
+        const hasMorningAmount = hasValue(morningAmountRaw) && n(morningAmountRaw) !== 0, hasNightAmount = hasValue(nightAmountRaw) && n(nightAmountRaw) !== 0, hasTotalAmount = hasValue(totalAmountRaw) && n(totalAmountRaw) !== 0;
+        const active = hasPurchase || hasMorningStock || hasMorningSold || hasNightStock || hasNightSold || hasMorningAmount || hasNightAmount || hasTotalAmount;
+        if (!active) continue;
 
-      const morningAmount = n(morningAmountRaw) || round2(morningSold * price);
-      const nightAmount = n(nightAmountRaw) || round2(nightSold * price);
-      const totalAmount = n(totalAmountRaw) || round2(morningAmount + nightAmount);
-      const sameDayExpectedNightStock = round2(morningStock + purchase - morningSold);
-      const endingStock = hasNightStock ? round2(nightStock - nightSold) : sameDayExpectedNightStock;
+        const morningAmount = n(morningAmountRaw) || round2(morningSold * price);
+        const nightAmount = n(nightAmountRaw) || round2(nightSold * price);
+        const totalAmount = n(totalAmountRaw) || round2(morningAmount + nightAmount);
+        const sameDayExpectedNightStock = round2(morningStock + purchase - morningSold);
+        const endingStock = hasNightStock ? round2(nightStock - nightSold) : sameDayExpectedNightStock;
 
-      parsed.push({ date, sheetName, rowIndex: i, rowNumber: i + 1, no: row[0] as number | string, category, name, price, purchase, morningStock, morningSold, morningAmount, nightStock, nightSold, nightAmount, totalAmount, endingStock, sameDayExpectedNightStock, sameDayStockDiff: hasNightStock ? round2(nightStock - sameDayExpectedNightStock) : 0, morningAmountDiff: hasMorningSold || hasMorningAmount ? round2(morningAmount - morningSold * price) : 0, nightAmountDiff: hasNightSold || hasNightAmount ? round2(nightAmount - nightSold * price) : 0, totalAmountDiff: hasMorningAmount || hasNightAmount || hasTotalAmount ? round2(totalAmount - morningAmount - nightAmount) : 0, hasMorningStock, hasMorningSold, hasNightStock, hasNightSold, hasPurchase, hasMorningAmount, hasNightAmount, hasTotalAmount });
-    }
+        parsedRows.push({ date, sheetName, rowIndex: i, rowNumber: i + 1, no: row[group.noCol] as number | string, category, name, price, purchase, morningStock, morningSold, morningAmount, nightStock, nightSold, nightAmount, totalAmount, endingStock, sameDayExpectedNightStock, sameDayStockDiff: hasNightStock ? round2(nightStock - sameDayExpectedNightStock) : 0, morningAmountDiff: hasMorningSold || hasMorningAmount ? round2(morningAmount - morningSold * price) : 0, nightAmountDiff: hasNightSold || hasNightAmount ? round2(nightAmount - nightSold * price) : 0, totalAmountDiff: hasMorningAmount || hasNightAmount || hasTotalAmount ? round2(totalAmount - morningAmount - nightAmount) : 0, hasMorningStock, hasMorningSold, hasNightStock, hasNightSold, hasPurchase, hasMorningAmount, hasNightAmount, hasTotalAmount });
+      }
+    });
   });
-  return parsed.sort((a, b) => `${a.date}-${a.rowNumber}`.localeCompare(`${b.date}-${b.rowNumber}`));
+
+  return {
+    rows: parsedRows.sort((a, b) => `${a.date}-${a.category}-${a.rowNumber}`.localeCompare(`${b.date}-${b.category}-${b.rowNumber}`)),
+    payments: payments.sort((a, b) => `${a.date}-${a.shift}-${a.channel}`.localeCompare(`${b.date}-${b.shift}-${b.channel}`))
+  };
 }
 
 function hasRowIssue(row: StockRow) { return (row.hasNightStock && Math.abs(row.sameDayStockDiff) > 0.01) || Math.abs(row.morningAmountDiff) > 0.01 || Math.abs(row.nightAmountDiff) > 0.01 || Math.abs(row.totalAmountDiff) > 0.01; }
@@ -231,14 +361,17 @@ export default function Home() {
   const [fileName, setFileName] = useState("");
   const [workbook, setWorkbook] = useState<XLSX.WorkBook | null>(null);
   const [rows, setRows] = useState<StockRow[]>([]);
+  const [paymentRecords, setPaymentRecords] = useState<PaymentRecord[]>([]);
   const [countInput, setCountInput] = useState<Record<string, string>>({});
   const [corrections, setCorrections] = useState<Record<string, CorrectionRecord>>({});
 
   async function handleFile(file: File) {
     const buffer = await file.arrayBuffer();
     const nextWorkbook = XLSX.read(buffer, { type: "array", cellDates: true, cellFormula: true, cellNF: true, cellStyles: true });
+    const parsed = parseWorkbook(nextWorkbook);
     setWorkbook(nextWorkbook);
-    setRows(parseWorkbook(nextWorkbook));
+    setRows(parsed.rows);
+    setPaymentRecords(parsed.payments);
     setFileName(file.name);
     setCountInput({});
     setCorrections({});
@@ -256,11 +389,30 @@ export default function Home() {
     return Array.from(map.values()).map((item) => ({ ...item, purchase: round2(item.purchase), morningSold: round2(item.morningSold), nightSold: round2(item.nightSold), totalSold: round2(item.totalSold), totalAmount: round2(item.totalAmount), endingStock: round2(item.endingStock) })).sort((a, b) => a.category.localeCompare(b.category) || b.totalAmount - a.totalAmount);
   }, [rows]);
 
-  const categorySummary = useMemo(() => {
-    const map = new Map<string, { category: string; totalSold: number; totalAmount: number; count: number }>();
+  const categorySummary = useMemo<CategorySummary[]>(() => {
+    const map = new Map<string, CategorySummary>();
     productSummary.forEach((item) => { const current = map.get(item.category) ?? { category: item.category, totalSold: 0, totalAmount: 0, count: 0 }; current.totalSold += item.totalSold; current.totalAmount += item.totalAmount; current.count += 1; map.set(item.category, current); });
     return Array.from(map.values()).map((item) => ({ ...item, totalSold: round2(item.totalSold), totalAmount: round2(item.totalAmount) })).sort((a, b) => b.totalAmount - a.totalAmount);
   }, [productSummary]);
+
+  const paymentDaily = useMemo<PaymentDailySummary[]>(() => {
+    const byDate = new Map<string, PaymentRecord[]>();
+    paymentRecords.forEach((record) => { const list = byDate.get(record.date) ?? []; list.push(record); byDate.set(record.date, list); });
+    return Array.from(byDate.entries()).map(([date, records]) => {
+      const totalRecords = records.filter((record) => record.shift === "合计");
+      const source = totalRecords.length ? totalRecords : records.filter((record) => record.shift !== "合计");
+      const totals = Object.fromEntries(PAYMENT_CHANNELS.map((channel) => [channel, 0])) as Record<string, number>;
+      source.forEach((record) => { totals[record.channel] = round2((totals[record.channel] ?? 0) + record.amount); });
+      const total = round2(PAYMENT_CHANNELS.reduce((sum, channel) => sum + (totals[channel] ?? 0), 0));
+      return { date, totals, total };
+    }).sort((a, b) => a.date.localeCompare(b.date));
+  }, [paymentRecords]);
+
+  const paymentSummary = useMemo<PaymentSummary[]>(() => {
+    const totals = Object.fromEntries(PAYMENT_CHANNELS.map((channel) => [channel, 0])) as Record<string, number>;
+    paymentDaily.forEach((day) => PAYMENT_CHANNELS.forEach((channel) => { totals[channel] = round2((totals[channel] ?? 0) + (day.totals[channel] ?? 0)); }));
+    return PAYMENT_CHANNELS.map((channel) => ({ channel, amount: round2(totals[channel] ?? 0) }));
+  }, [paymentDaily]);
 
   const handovers = useMemo<HandoverIssue[]>(() => {
     const issues: HandoverIssue[] = [];
@@ -299,6 +451,7 @@ export default function Home() {
   const latestMissedMorningRows = latestRows.filter(isMissedMorningDeduction);
   const totalAmount = daily.reduce((sum, item) => sum + item.totalAmount, 0);
   const totalSold = daily.reduce((sum, item) => sum + item.totalSold, 0);
+  const totalPaymentAmount = paymentSummary.reduce((sum, item) => sum + item.amount, 0);
   const correctionRows = Object.values(corrections).sort((a, b) => `${a.date}-${a.category}-${a.name}-${a.cell}`.localeCompare(`${b.date}-${b.category}-${b.name}-${b.cell}`));
   const stats = useMemo<IssueStats>(() => {
     const inventoryIssueCount = handovers.filter((item) => item.type !== "金额核对").length;
@@ -353,8 +506,17 @@ export default function Home() {
     styleRow(sheet, 3, 6, HEADER_STYLE);
     styleRow(sheet, totalRow, 6, TOTAL_STYLE);
     for (let row = 4; row <= totalRow; row += 1) { setNumFormat(sheet, row, 3, "0.00"); setNumFormat(sheet, row, 5, "0.00"); }
+
+    const paymentRows = [
+      ...paymentSummary.map((item, index) => ({ 序号: index + 1, 收款渠道: item.channel, 月收入: item.amount })),
+      { 序号: "总计", 收款渠道: "", 月收入: round2(totalPaymentAmount) }
+    ];
+    const paymentSheet = XLSX.utils.json_to_sheet(paymentRows);
+    paymentSheet["!cols"] = [{ wch: 8 }, { wch: 14 }, { wch: 14 }];
+
     const reportWorkbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(reportWorkbook, sheet, "销售汇总报表");
+    XLSX.utils.book_append_sheet(reportWorkbook, paymentSheet, "收款渠道月统计");
     XLSX.writeFile(reportWorkbook, `${STORE_NAME}-小商品销售汇总报表.xlsx`);
   }
 
@@ -385,13 +547,14 @@ export default function Home() {
 
   return (
     <main className="min-h-screen p-4 md:p-8"><div className="mx-auto max-w-7xl">
-      <header className="mb-6 rounded-3xl bg-slate-900 p-6 text-white shadow-sm"><p className="text-sm text-slate-300">Inventory Report Reconciliation</p><h1 className="mt-1 text-2xl font-bold md:text-4xl">报表自动核对助手</h1><p className="mt-2 max-w-3xl text-sm text-slate-300">支持香烟、饮料、打火机、杂项等商品分类解析、核对，并支持把库存类异常写回原表对应单元格后下载。</p></header>
-      <section className="mb-6 rounded-2xl border bg-white p-5 shadow-sm"><div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between"><div><h2 className="text-lg font-bold">导入手工报表 Excel</h2><p className="mt-1 text-sm text-slate-500">上传原始报表后，系统会解析香烟、饮料、打火机、杂项等商品。下载已纠正原表时，只修改原工作簿对应单元格，不新增纠正记录 Sheet。</p></div><label className="inline-flex cursor-pointer items-center justify-center rounded-xl bg-slate-900 px-4 py-3 text-sm font-medium text-white">选择报表文件<input className="hidden" type="file" accept=".xlsx,.xls" onChange={(event: ChangeEvent<HTMLInputElement>) => event.target.files?.[0] && handleFile(event.target.files[0])} /></label></div>{fileName ? <p className="mt-3 text-sm text-slate-600">已导入：<b>{fileName}</b>，共解析 {rows.length} 条有效商品明细。</p> : null}</section>
+      <header className="mb-6 rounded-3xl bg-slate-900 p-6 text-white shadow-sm"><p className="text-sm text-slate-300">Inventory Report Reconciliation</p><h1 className="mt-1 text-2xl font-bold md:text-4xl">报表自动核对助手</h1><p className="mt-2 max-w-3xl text-sm text-slate-300">支持香烟、饮料、打火机、杂项等多块商品表解析、核对，并统计小Y、现金、微信、扫码盒子、支付宝月收入。</p></header>
+      <section className="mb-6 rounded-2xl border bg-white p-5 shadow-sm"><div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between"><div><h2 className="text-lg font-bold">导入手工报表 Excel</h2><p className="mt-1 text-sm text-slate-500">上传原始报表后，系统会扫描所有包含“商品名称/售卖商品 + 价格/售价”的商品表。下载已纠正原表时，只修改原工作簿对应单元格，不新增纠正记录 Sheet。</p></div><label className="inline-flex cursor-pointer items-center justify-center rounded-xl bg-slate-900 px-4 py-3 text-sm font-medium text-white">选择报表文件<input className="hidden" type="file" accept=".xlsx,.xls" onChange={(event: ChangeEvent<HTMLInputElement>) => event.target.files?.[0] && handleFile(event.target.files[0])} /></label></div>{fileName ? <p className="mt-3 text-sm text-slate-600">已导入：<b>{fileName}</b>，共解析 {rows.length} 条有效商品明细，{categorySummary.length} 个分类，{paymentRecords.length} 条收款渠道记录。</p> : null}</section>
       <nav className="mb-6 flex flex-wrap gap-2">{nav.map(([key, label]) => <button key={key} onClick={() => setTab(key)} className={`rounded-xl px-4 py-2 text-sm font-medium ${tab === key ? "bg-slate-900 text-white" : "bg-white text-slate-700 shadow-sm hover:bg-slate-100"}`}>{label}</button>)}</nav>
-      {!rows.length ? <section className="rounded-2xl border bg-white p-6 shadow-sm"><h2 className="text-lg font-bold">等待导入报表</h2><p className="mt-2 text-sm text-slate-600">请先上传手工报表 Excel。导入后会自动显示汇总、异常和原表纠正功能。</p></section> : null}
-      {rows.length > 0 && tab === "overview" ? <section className="space-y-6"><StatsCards stats={stats} /><div className="grid gap-4 md:grid-cols-4"><Card title="日期数量" value={`${daily.length} 天`} desc={`最新日期 ${latestDate}`} /><Card title="商品品规" value={`${productSummary.length} 个`} desc={`${categorySummary.length} 个分类`} /><Card title="总销量" value={`${round2(totalSold)} 件`} /><Card title="总销售金额" value={`¥${money(totalAmount)}`} /></div>{categorySummary.length ? <div className="rounded-2xl border bg-white p-5 shadow-sm"><h2 className="text-lg font-bold">分类汇总</h2><div className="mt-3 grid gap-3 md:grid-cols-4">{categorySummary.map((item) => <div key={item.category} className="rounded-xl bg-slate-50 p-4"><div className="font-bold">{item.category}</div><div className="mt-1 text-sm text-slate-600">品规 {item.count} 个 / 销量 {item.totalSold} / 金额 ¥{money(item.totalAmount)}</div></div>)}</div></div> : null}<div className="rounded-2xl border bg-white p-5 shadow-sm"><div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between"><div><h2 className="text-lg font-bold">导出</h2><p className="mt-1 text-sm text-slate-500">库存类异常可写回原表；金额核对异常只出现在提示和异常报表里，不自动改原表。</p></div><div className="flex flex-wrap gap-2"><button onClick={downloadCorrectedOriginal} className="rounded-xl bg-green-700 px-4 py-2 text-sm font-medium text-white">下载已纠正原表</button><button onClick={exportSalesSummaryReport} className="rounded-xl border px-4 py-2 text-sm font-medium">导出销售汇总报表</button><button onClick={exportExceptionReport} className="rounded-xl border px-4 py-2 text-sm font-medium">导出异常核对报表</button></div></div></div></section> : null}
-      {rows.length > 0 && tab === "daily" ? <section className="rounded-2xl border bg-white p-5 shadow-sm"><h2 className="text-lg font-bold">每日报表汇总</h2><div className="table-scroll mt-4"><table className="min-w-full text-sm"><thead className="bg-slate-50 text-left"><tr>{["日期", "进货", "早班销量", "夜班销量", "总销量", "早班金额", "夜班金额", "总金额", "异常"].map((h) => <th key={h} className="p-3">{h}</th>)}</tr></thead><tbody>{daily.map((item) => <tr key={item.date} className="border-t"><td className="p-3">{item.date}</td><td className="p-3">{item.purchase}</td><td className="p-3">{item.morningSold}</td><td className="p-3">{item.nightSold}</td><td className="p-3">{item.totalSold}</td><td className="p-3">¥{money(item.morningAmount)}</td><td className="p-3">¥{money(item.nightAmount)}</td><td className="p-3">¥{money(item.totalAmount)}</td><td className="p-3">{item.abnormalCount ? <Badge tone="red">{item.abnormalCount} 条</Badge> : <Badge tone="green">正常</Badge>}</td></tr>)}</tbody></table></div></section> : null}
-      {rows.length > 0 && tab === "summary" ? <section className="rounded-2xl border bg-white p-5 shadow-sm"><h2 className="text-lg font-bold">商品月汇总</h2><div className="table-scroll mt-4"><table className="min-w-full text-sm"><thead className="bg-slate-50 text-left"><tr>{["分类", "商品", "价格", "月进货", "早班销量", "夜班销量", "月销量", "月销售金额", "月末结存"].map((h) => <th key={h} className="p-3">{h}</th>)}</tr></thead><tbody>{productSummary.map((item) => <tr key={`${item.category}-${item.name}-${item.price}`} className="border-t"><td className="p-3">{item.category}</td><td className="p-3">{item.name}</td><td className="p-3">¥{money(item.price)}</td><td className="p-3">{item.purchase}</td><td className="p-3">{item.morningSold}</td><td className="p-3">{item.nightSold}</td><td className="p-3">{item.totalSold}</td><td className="p-3">¥{money(item.totalAmount)}</td><td className="p-3">{item.endingStock}</td></tr>)}</tbody></table></div></section> : null}
+      {!rows.length ? <section className="rounded-2xl border bg-white p-6 shadow-sm"><h2 className="text-lg font-bold">等待导入报表</h2><p className="mt-2 text-sm text-slate-600">请先上传手工报表 Excel。导入后会自动显示商品总汇、每日报表、分类汇总、收款统计、异常和原表纠正功能。</p></section> : null}
+      {rows.length > 0 && tab === "overview" ? <section className="space-y-6"><StatsCards stats={stats} /><div className="grid gap-4 md:grid-cols-4"><Card title="日期数量" value={`${daily.length} 天`} desc={`最新日期 ${latestDate}`} /><Card title="商品品规" value={`${productSummary.length} 个`} desc={`${categorySummary.length} 个分类`} /><Card title="总销量" value={`${round2(totalSold)} 件`} /><Card title="总销售金额" value={`¥${money(totalAmount)}`} desc={`收款统计 ¥${money(totalPaymentAmount)}`} /></div>{categorySummary.length ? <div className="rounded-2xl border bg-white p-5 shadow-sm"><h2 className="text-lg font-bold">分类汇总</h2><div className="mt-3 grid gap-3 md:grid-cols-4">{categorySummary.map((item) => <div key={item.category} className="rounded-xl bg-slate-50 p-4"><div className="font-bold">{item.category}</div><div className="mt-1 text-sm text-slate-600">品规 {item.count} 个 / 销量 {item.totalSold} / 金额 ¥{money(item.totalAmount)}</div></div>)}</div></div> : null}{paymentSummary.length ? <div className="rounded-2xl border bg-white p-5 shadow-sm"><h2 className="text-lg font-bold">收款渠道月统计</h2><div className="mt-3 grid gap-3 md:grid-cols-5">{paymentSummary.map((item) => <div key={item.channel} className="rounded-xl bg-slate-50 p-4"><div className="font-bold">{item.channel}</div><div className="mt-1 text-sm text-slate-600">¥{money(item.amount)}</div></div>)}</div></div> : null}<div className="rounded-2xl border bg-white p-5 shadow-sm"><div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between"><div><h2 className="text-lg font-bold">导出</h2><p className="mt-1 text-sm text-slate-500">库存类异常可写回原表；金额核对异常只出现在提示和异常报表里，不自动改原表。</p></div><div className="flex flex-wrap gap-2"><button onClick={downloadCorrectedOriginal} className="rounded-xl bg-green-700 px-4 py-2 text-sm font-medium text-white">下载已纠正原表</button><button onClick={exportSalesSummaryReport} className="rounded-xl border px-4 py-2 text-sm font-medium">导出销售汇总报表</button><button onClick={exportExceptionReport} className="rounded-xl border px-4 py-2 text-sm font-medium">导出异常核对报表</button></div></div></div></section> : null}
+      {rows.length > 0 && tab === "daily" ? <section className="rounded-2xl border bg-white p-5 shadow-sm"><h2 className="text-lg font-bold">每日报表汇总</h2><p className="mt-1 text-sm text-slate-500">这里统计所有解析到的商品表，不只统计香烟。</p><div className="table-scroll mt-4"><table className="min-w-full text-sm"><thead className="bg-slate-50 text-left"><tr>{["日期", "进货", "早班销量", "夜班销量", "总销量", "早班金额", "夜班金额", "总金额", "异常"].map((h) => <th key={h} className="p-3">{h}</th>)}</tr></thead><tbody>{daily.map((item) => <tr key={item.date} className="border-t"><td className="p-3">{item.date}</td><td className="p-3">{item.purchase}</td><td className="p-3">{item.morningSold}</td><td className="p-3">{item.nightSold}</td><td className="p-3">{item.totalSold}</td><td className="p-3">¥{money(item.morningAmount)}</td><td className="p-3">¥{money(item.nightAmount)}</td><td className="p-3">¥{money(item.totalAmount)}</td><td className="p-3">{item.abnormalCount ? <Badge tone="red">{item.abnormalCount} 条</Badge> : <Badge tone="green">正常</Badge>}</td></tr>)}</tbody></table></div></section> : null}
+      {rows.length > 0 && tab === "summary" ? <section className="rounded-2xl border bg-white p-5 shadow-sm"><h2 className="text-lg font-bold">商品总汇</h2><p className="mt-1 text-sm text-slate-500">香烟、饮料、打火机、杂项都会进入这里。</p><div className="table-scroll mt-4"><table className="min-w-full text-sm"><thead className="bg-slate-50 text-left"><tr>{["分类", "商品", "价格", "月进货", "早班销量", "夜班销量", "月销量", "月销售金额", "月末结存"].map((h) => <th key={h} className="p-3">{h}</th>)}</tr></thead><tbody>{productSummary.map((item) => <tr key={`${item.category}-${item.name}-${item.price}`} className="border-t"><td className="p-3">{item.category}</td><td className="p-3">{item.name}</td><td className="p-3">¥{money(item.price)}</td><td className="p-3">{item.purchase}</td><td className="p-3">{item.morningSold}</td><td className="p-3">{item.nightSold}</td><td className="p-3">{item.totalSold}</td><td className="p-3">¥{money(item.totalAmount)}</td><td className="p-3">{item.endingStock}</td></tr>)}</tbody></table></div></section> : null}
+      {rows.length > 0 && tab === "payment" ? <section className="space-y-5"><div className="rounded-2xl border bg-white p-5 shadow-sm"><h2 className="text-lg font-bold">收款渠道月统计</h2><div className="mt-3 grid gap-3 md:grid-cols-5">{paymentSummary.map((item) => <div key={item.channel} className="rounded-xl bg-slate-50 p-4"><div className="font-bold">{item.channel}</div><div className="mt-1 text-sm text-slate-600">¥{money(item.amount)}</div></div>)}</div><div className="mt-4 rounded-xl bg-slate-900 p-4 text-white"><div className="text-sm text-slate-300">全部渠道合计</div><div className="mt-1 text-2xl font-bold">¥{money(totalPaymentAmount)}</div></div></div><div className="rounded-2xl border bg-white p-5 shadow-sm"><h2 className="text-lg font-bold">每日收款明细</h2><div className="table-scroll mt-4"><table className="min-w-full text-sm"><thead className="bg-slate-50 text-left"><tr>{["日期", ...PAYMENT_CHANNELS, "合计"].map((h) => <th key={h} className="p-3">{h}</th>)}</tr></thead><tbody>{paymentDaily.map((item) => <tr key={item.date} className="border-t"><td className="p-3">{item.date}</td>{PAYMENT_CHANNELS.map((channel) => <td key={channel} className="p-3">¥{money(item.totals[channel] ?? 0)}</td>)}<td className="p-3 font-bold">¥{money(item.total)}</td></tr>)}</tbody></table></div></div></section> : null}
       {rows.length > 0 && tab === "handover" ? <section className="space-y-5"><StatsCards stats={stats} /><div className="rounded-2xl border bg-white p-5 shadow-sm"><div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between"><div><h2 className="text-lg font-bold">交接和金额异常</h2><p className="mt-1 text-sm text-slate-500">早班交夜班、疑似未扣早班销量写回当天 H列夜班库存；次日接班写回次日 E列早班库存；金额核对只提示。</p></div><div className="flex flex-wrap gap-2"><button onClick={() => applyWritableHandoverCorrections("all")} className="rounded-xl bg-yellow-700 px-4 py-2 text-sm text-white">准备写回全部库存异常</button><button onClick={() => applyWritableHandoverCorrections("missedMorning")} className="rounded-xl border px-4 py-2 text-sm">只准备疑似未扣</button><button onClick={downloadCorrectedOriginal} className="rounded-xl bg-green-700 px-4 py-2 text-sm text-white">下载已纠正原表</button></div></div><div className="table-scroll mt-4"><table className="min-w-full text-sm"><thead className="bg-slate-50 text-left"><tr>{["类型", "分类", "日期", "次日", "商品", "应为", "实际", "差异", "写回位置", "说明", "操作"].map((h) => <th key={h} className="p-3">{h}</th>)}</tr></thead><tbody>{handovers.map((item) => { const prepared = item.writeBack ? corrections[item.writeBack.key] : null; return <tr key={item.id} className="border-t"><td className="p-3"><Badge tone={item.type === "金额核对" ? "red" : item.type === "疑似未扣早班销量" ? "yellow" : "red"}>{item.type}</Badge></td><td className="p-3">{item.category}</td><td className="p-3">{item.date}</td><td className="p-3">{item.nextDate ?? ""}</td><td className="p-3">{item.name}</td><td className="p-3">{item.expected}</td><td className="p-3">{item.actual}</td><td className="p-3">{item.diff}</td><td className="p-3">{writeBackLocation(item)}</td><td className="p-3">{item.note}</td><td className="p-3">{item.writeBack ? prepared ? <button className="rounded-lg border px-3 py-1 text-xs" onClick={() => undoCorrectionByKey(item.writeBack!.key)}>撤销</button> : <button className="rounded-lg bg-slate-900 px-3 py-1 text-xs text-white" onClick={() => applyIssueCorrection(item)}>准备写回</button> : <Badge>只提示</Badge>}</td></tr>; })}</tbody></table></div>{correctionRows.length ? <div className="mt-5 rounded-xl bg-yellow-50 p-4 text-sm text-yellow-900"><b>已准备写回原表 {correctionRows.length} 条：</b>{correctionRows.slice(0, 20).map((item) => <div key={item.key}>{item.sheetName}!{item.cell} {item.category} / {item.name}（{item.columnName}）：{item.before} → {item.after}</div>)}</div> : null}</div></section> : null}
       {rows.length > 0 && tab === "count" ? <section className="rounded-2xl border bg-white p-5 shadow-sm"><div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between"><div><h2 className="text-lg font-bold">现场盘点清单</h2><p className="mt-1 text-sm text-slate-500">现场实点有差异时，可以按实点反推并修正原表 H列 夜班库存。</p></div><button onClick={exportOnsiteCount} className="rounded-xl border px-4 py-2 text-sm font-medium">导出现场盘点明细</button></div>{latestMissedMorningRows.length ? <div className="mt-4 rounded-xl bg-yellow-50 p-4 text-sm text-yellow-900"><b>最新日期检测到 {latestMissedMorningRows.length} 条疑似交班忘扣早班销量。</b><button className="ml-0 mt-3 rounded-lg bg-yellow-700 px-4 py-2 text-sm text-white md:ml-3 md:mt-0" onClick={() => applyWritableHandoverCorrections("missedMorning")}>准备写回疑似未扣</button></div> : null}<div className="table-scroll mt-4"><table className="min-w-full text-sm"><thead className="bg-slate-50 text-left"><tr>{["分类", "商品", "价格", "当前应剩", "现场实点", "差异", "状态", "纠正原表"].map((h) => <th key={h} className="p-3">{h}</th>)}</tr></thead><tbody>{latestRows.map((row) => { const key = rowKey(row); const inputKey = countKey(row); const actualText = countInput[inputKey] ?? ""; const actual = actualText === "" ? null : n(actualText); const expected = correctedExpectedEndingStock(row); const diff = actual === null ? null : round2(actual - expected); const correction = corrections[rowCellKey(row, NIGHT_STOCK_COLUMN)]; return <tr key={key} className="border-t"><td className="p-3">{row.category}</td><td className="p-3">{row.name}{isMissedMorningDeduction(row) ? <div className="text-xs text-yellow-700">疑似未扣早班销量</div> : null}</td><td className="p-3">¥{money(row.price)}</td><td className="p-3 font-bold">{expected}{correction ? <div className="text-xs font-normal text-slate-500">写回夜班库存：{correction.before} → {correction.after}</div> : null}</td><td className="p-3"><input className="w-28 rounded-xl border p-2" inputMode="decimal" value={actualText} onChange={(event: ChangeEvent<HTMLInputElement>) => setCountInput({ ...countInput, [inputKey]: event.target.value })} /></td><td className="p-3">{diff === null ? "" : diff}</td><td className="p-3">{correction ? <Badge tone="yellow">待写回原表</Badge> : diff === null ? <Badge>未点</Badge> : diff === 0 ? <Badge tone="green">正常</Badge> : <Badge tone="red">有差异</Badge>}</td><td className="p-3">{actual !== null && diff !== 0 ? <button className="rounded-lg bg-slate-900 px-3 py-1 text-xs text-white" onClick={() => addOnsiteCorrection(row, actual)}>按实点纠正H列</button> : null}{correction ? <button className="ml-2 rounded-lg border px-3 py-1 text-xs" onClick={() => undoCorrection(row)}>撤销</button> : null}</td></tr>; })}</tbody></table></div>{correctionRows.length ? <div className="mt-5 rounded-xl bg-yellow-50 p-4 text-sm text-yellow-900"><b>待写回原表 {correctionRows.length} 条。</b><button className="ml-3 rounded-lg bg-green-700 px-4 py-2 text-sm text-white" onClick={downloadCorrectedOriginal}>下载已纠正原表</button></div> : null}</section> : null}
     </div></main>
