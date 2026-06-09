@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import UniversalSmartReportAppV4 from "./UniversalSmartReportAppV4";
-import TemplateLibraryTools from "./TemplateLibraryTools";
 import GlobalProductCoverageCenter from "./GlobalProductCoverageCenter";
 
 type SuiteTab = "reconcile" | "settings";
@@ -35,7 +34,7 @@ export default function EnhancedReportSuite() {
     </div>
 
     <div className="mt-6">
-      {tab === "reconcile" ? <><TemplateLibraryTools /><UniversalSmartReportAppV4 /></> : null}
+      {tab === "reconcile" ? <UniversalSmartReportAppV4 /> : null}
       {tab === "settings" ? <div className="mx-auto max-w-7xl px-4 pb-8 md:px-8"><GlobalProductCoverageCenter /></div> : null}
     </div>
   </main>;
