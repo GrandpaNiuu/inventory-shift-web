@@ -1,1 +1,1 @@
-export { default } from "./UniversalReportApp";
+export { default } from "./EnhancedReportSuite";
