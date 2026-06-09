@@ -15,12 +15,13 @@ type BatchResult = {
   issues: BatchIssue[];
 };
 
-type Role = "product" | "price" | "amount" | "employee" | "department" | "baseSalary" | "attendanceDays" | "grossSalary" | "netSalary" | "deduction" | "advance" | "tax" | "socialInsurance";
+type Role = "product" | "price" | "amount" | "paidAmount" | "employee" | "department" | "baseSalary" | "attendanceDays" | "grossSalary" | "netSalary" | "deduction" | "advance" | "tax" | "socialInsurance";
 
 const ROLE_ALIASES: Record<Role, string[]> = {
   product: ["商品", "商品名称", "售卖商品", "产品", "品名", "货品"],
   price: ["价格", "单价", "售价", "销售价"],
-  amount: ["金额", "小计", "销售额", "收入", "合计", "实收", "收款"],
+  amount: ["金额", "小计", "销售额", "收入", "合计"],
+  paidAmount: ["实收", "实收金额", "到账", "收款", "收款金额", "已收"],
   employee: ["员工", "员工姓名", "姓名", "人员", "工号"],
   department: ["部门", "门店", "店铺", "分店", "班组"],
   baseSalary: ["基本工资", "底薪", "月薪", "工资标准"],
