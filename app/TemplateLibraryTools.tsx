@@ -77,13 +77,18 @@ export default function TemplateLibraryTools() {
   async function importLibrary(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
+    if (!file.name.toLowerCase().endsWith(".json")) {
+      alert("导入模板库只支持系统导出的 JSON 文件。Excel 表格请回到“智能上传”导入。");
+      if (inputRef.current) inputRef.current.value = "";
+      return;
+    }
     try {
       const raw = await file.text();
       const parsed = JSON.parse(raw) as Partial<BackupPayload>;
       const importedTemplates = Array.isArray(parsed.templates) ? parsed.templates : [];
       const importedAliases = Array.isArray(parsed.aliases) ? parsed.aliases : [];
       if (!importedTemplates.length && !importedAliases.length) {
-        alert("没有发现可导入的模板或商品别名。");
+        alert("没有发现可导入的模板或商品别名。请确认这是系统导出的 JSON 模板库文件。");
         return;
       }
       safeWriteList(TEMPLATE_KEY, mergeList(safeReadList(TEMPLATE_KEY), importedTemplates));
@@ -92,7 +97,7 @@ export default function TemplateLibraryTools() {
       alert(`导入完成：模板 ${importedTemplates.length} 条，商品别名 ${importedAliases.length} 条。页面将刷新以立即生效。`);
       window.location.reload();
     } catch {
-      alert("导入失败：请使用系统导出的 JSON 模板库文件。");
+      alert("导入失败：请使用系统导出的 JSON 模板库文件。Excel 表格不要放在这里导入。");
     } finally {
       if (inputRef.current) inputRef.current.value = "";
     }
@@ -103,12 +108,12 @@ export default function TemplateLibraryTools() {
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
           <h2 className="text-base font-bold text-slate-900">模板库导入 / 导出</h2>
-          <p className="mt-1 text-sm text-slate-500">备份或恢复字段模板和商品别名库。当前模板 {templateCount} 条，商品别名 {aliasCount} 条。</p>
+          <p className="mt-1 text-sm text-slate-500">这里导入的是系统导出的 JSON 模板库，不是 Excel 原表格。Excel 表格请到“智能上传”里导入。当前模板 {templateCount} 条，商品别名 {aliasCount} 条。</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <button onClick={exportLibrary} className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-medium text-white">导出模板库</button>
-          <button onClick={() => inputRef.current?.click()} className="rounded-xl border px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">导入模板库</button>
-          <input ref={inputRef} className="hidden" type="file" accept=".json" onChange={importLibrary} />
+          <button onClick={exportLibrary} className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-medium text-white">导出 JSON 模板库</button>
+          <button onClick={() => inputRef.current?.click()} className="rounded-xl border px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">导入 JSON 模板库</button>
+          <input ref={inputRef} className="hidden" type="file" accept=".json,application/json" onChange={importLibrary} />
         </div>
       </div>
     </div>
