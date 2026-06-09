@@ -1,1 +1,1 @@
-export { default } from "./InventoryPageConfigurable";
+export { default } from "./UniversalReportApp";
