@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import UniversalSmartReportAppV4 from "./UniversalSmartReportAppV4";
+import UniversalSmartReportAppV6 from "./UniversalSmartReportAppV6";
 import MultiFileSmartUploadPanel from "./MultiFileSmartUploadPanel";
 import TemplateLibraryTools from "./TemplateLibraryTools";
 
@@ -33,8 +33,8 @@ export default function UniversalSmartReportAppV5() {
 
     {tab === "smart" ? <section>
       {batchMode ? <MultiFileSmartUploadPanel /> : <section className="smart-upload-embedded">
-        <style>{`.smart-upload-embedded > main { padding: 0 !important; min-height: 0 !important; } .smart-upload-embedded > main > div > header, .smart-upload-embedded > main > div > nav { display: none !important; }`}</style>
-        <UniversalSmartReportAppV4 />
+        <style>{`.smart-upload-embedded > main { padding: 0 !important; min-height: 0 !important; }`}</style>
+        <UniversalSmartReportAppV6 />
       </section>}
     </section> : null}
 
@@ -50,7 +50,7 @@ export default function UniversalSmartReportAppV5() {
           {[
             "单表上传：详细核对和模板学习",
             "多门店批量：总览和总报告",
-            "商品表：每日、总汇、交接、库存、收款",
+            "商品表：每日、总汇、交接、库存、收款渠道",
             "工资表：应发、实发、扣款、部门岗位汇总",
             "通用表：字段识别、模板学习、结构化导出",
             "学习库：从 Excel 建模板、备份和恢复"
