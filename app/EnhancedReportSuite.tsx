@@ -1,13 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import UniversalStructuredReportApp from "./UniversalStructuredReportApp";
+import UniversalStructuredReportAppV2 from "./UniversalStructuredReportAppV2";
 import GlobalProductCoverageCenter from "./GlobalProductCoverageCenter";
 
 type SuiteTab = "reconcile" | "settings";
 
 const tabs: Array<[SuiteTab, string, string]> = [
-  ["reconcile", "智能核对中心", "任意 Excel 自动生成类似商品报表的结构化核对结果"],
+  ["reconcile", "智能核对中心", "优先识别商品报表规格，并生成结构化核对结果"],
   ["settings", "设置", "商品识别库、商品词库和未识别商品维护"]
 ];
 
@@ -23,7 +23,7 @@ export default function EnhancedReportSuite() {
       <header className="rounded-3xl bg-gradient-to-br from-slate-950 to-slate-800 p-6 text-white shadow-sm">
         <p className="text-sm text-slate-300">Global Product & Spreadsheet Reconciliation Suite</p>
         <h1 className="mt-1 text-2xl font-bold md:text-4xl">全球商品经营数据自动核对系统</h1>
-        <p className="mt-2 max-w-4xl text-sm leading-6 text-slate-300">支持任意 Excel 智能识别、结构化核对结果、当前商品报表专用核对，以及商品识别库维护。系统会逐步通过模板和商品词库学习，提高后续自动化准确率。</p>
+        <p className="mt-2 max-w-4xl text-sm leading-6 text-slate-300">支持商品报表规格识别、结构化核对结果、当前商品报表专用核对，以及商品识别库维护。系统会逐步通过模板和商品词库学习，提高后续自动化准确率。</p>
       </header>
       <nav className="mt-6 grid gap-3 md:grid-cols-2">
         {tabs.map(([key, label, desc]) => <button key={key} onClick={() => setTab(key)} className={`rounded-2xl border p-4 text-left shadow-sm transition ${tab === key ? "border-slate-950 bg-slate-950 text-white" : "bg-white text-slate-800 hover:bg-slate-100"}`}>
@@ -34,7 +34,7 @@ export default function EnhancedReportSuite() {
     </div>
 
     <div className="mt-6">
-      {tab === "reconcile" ? <UniversalStructuredReportApp /> : null}
+      {tab === "reconcile" ? <UniversalStructuredReportAppV2 /> : null}
       {tab === "settings" ? <div className="mx-auto max-w-7xl px-4 pb-8 md:px-8"><GlobalProductCoverageCenter /></div> : null}
     </div>
   </main>;
