@@ -16,7 +16,12 @@ export const GLOBAL_PRODUCT_CATEGORIES: GlobalProductCategory[] = [
     id: "tobacco",
     name: "烟草烟具",
     globalName: "Tobacco & Smoking Accessories",
-    keywords: ["烟", "香烟", "卷烟", "烟草", "中华", "芙蓉王", "利群", "玉溪", "云烟", "南京", "双喜", "红塔山", "白沙", "黄金叶", "苏烟", "泰山", "牡丹", "真龙", "万宝路", "marlboro", "cigarette", "tobacco", "smoke", "lighter", "打火机", "火机", "火柴", "点烟器", "зажигалка", "сигарета", "табак", "ولاعة", "سجائر", "تبغ"]
+    keywords: [
+      "烟", "香烟", "卷烟", "烟草", "细支", "中支", "爆珠", "硬盒", "软盒", "硬", "软",
+      "中华", "芙蓉王", "利群", "玉溪", "黄鹤楼", "云烟", "南京", "双喜", "红塔山", "白沙", "娇子", "黄金叶", "苏烟", "泰山", "七匹狼", "中南海", "牡丹", "贵烟", "真龙", "钻石", "煊赫门", "万宝路", "黄山", "长白山", "延安", "兰州", "宽窄", "荷花", "天子", "红河", "红金龙", "金圣", "人民大会堂", "雨花石",
+      "红旗渠", "工字牌", "五叶神", "滕王阁", "好猫", "金猴子", "金丝猴", "黄果树", "都宝", "大前门", "大重九", "阿诗玛", "石林", "将军", "熊猫", "大熊猫", "上海", "恒大", "哈德门", "红双喜", "黄鹤楼", "天下秀", "利群", "白将", "红将", "壹枝笔", "小熊猫", "云龙", "云烟", "茶花", "紫云", "软蓝", "硬蓝", "软珍", "硬珍", "软红", "硬红", "软金", "硬金", "蓝", "金", "白", "黑", "红",
+      "marlboro", "cigarette", "tobacco", "smoke", "lighter", "打火机", "火机", "火柴", "点烟器", "зажигалка", "сигарета", "табак", "ولاعة", "سجائر", "تبغ"
+    ]
   },
   {
     id: "daily-necessities",
@@ -98,9 +103,14 @@ export function normalizeProductText(value: unknown) {
     .replace(/[\s\-_，,。.;；:：/\\|()（）\[\]【】{}<>《》"'“”‘’]+/g, "");
 }
 
+const STRONG_TOBACCO_PATTERN = /(中华|芙蓉王|利群|玉溪|黄鹤楼|云烟|南京|双喜|红塔山|白沙|娇子|黄金叶|苏烟|泰山|七匹狼|中南海|牡丹|贵烟|真龙|钻石|煊赫门|万宝路|黄山|长白山|延安|兰州|宽窄|荷花|天子|红河|红金龙|金圣|人民大会堂|雨花石|红旗渠|工字牌|五叶神|滕王阁|好猫|金猴子|金丝猴|黄果树|都宝|大前门|大重九|阿诗玛|石林|将军|熊猫|大熊猫|上海|恒大|哈德门|红双喜|天下秀|小熊猫)/;
+
 export function classifyGlobalProduct(value: unknown) {
   const text = normalizeProductText(value);
   if (!text) return { category: "未识别", confidence: 0, matchedKeyword: "" };
+
+  const strongTobacco = text.match(STRONG_TOBACCO_PATTERN);
+  if (strongTobacco) return { category: "烟草烟具", confidence: 0.99, matchedKeyword: strongTobacco[0] };
 
   let best = { category: "未识别", confidence: 0, matchedKeyword: "" };
   for (const category of GLOBAL_PRODUCT_CATEGORIES) {
