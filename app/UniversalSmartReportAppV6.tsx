@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import MultiFileSmartUploadPanel from "./MultiFileSmartUploadPanel";
-import InventoryPageConfigurableFixed from "./InventoryPageConfigurableFixed";
+import InventoryPageConfigurable from "./InventoryPageConfigurable";
 import PayrollReportApp from "./PayrollReportApp";
 
 type Mode = "auto" | "product" | "payroll";
@@ -16,7 +16,7 @@ export default function UniversalSmartReportAppV6() {
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
             <h2 className="text-base font-bold text-slate-900">智能核对入口</h2>
-            <p className="mt-1 text-sm text-slate-500">商品详细功能已切换为修复版：白班、夜班、总合计不会重复相加。</p>
+            <p className="mt-1 text-sm text-slate-500">商品详细功能已恢复原自动盘点模块，只修复收款重复统计。</p>
           </div>
           <div className="flex flex-wrap gap-2">
             <button onClick={() => setMode("product")} className={`rounded-xl px-4 py-2 text-sm font-medium ${mode === "product" ? "bg-slate-950 text-white" : "bg-slate-100 text-slate-700"}`}>商品详细功能</button>
@@ -26,7 +26,7 @@ export default function UniversalSmartReportAppV6() {
         </div>
       </div>
     </div>
-    {mode === "product" ? <InventoryPageConfigurableFixed /> : null}
+    {mode === "product" ? <InventoryPageConfigurable /> : null}
     {mode === "auto" ? <MultiFileSmartUploadPanel /> : null}
     {mode === "payroll" ? <PayrollReportApp /> : null}
   </section>;
