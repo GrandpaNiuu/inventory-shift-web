@@ -14,7 +14,7 @@ export default function UniversalSmartReportAppV5() {
       <header className="mb-6 rounded-3xl bg-slate-950 p-6 text-white shadow-sm">
         <p className="text-sm text-slate-300">Universal Smart Reconciliation Engine</p>
         <h1 className="mt-1 text-2xl font-bold md:text-4xl">智能表格自动核对</h1>
-        <p className="mt-2 max-w-4xl text-sm leading-6 text-slate-300">一个入口上传一个或多个 Excel，系统自动识别商品表、工资表和通用业务表，并显示对应核对结果。</p>
+        <p className="mt-2 max-w-4xl text-sm leading-6 text-slate-300">统一自动识别版：一个入口上传一个或多个 Excel，系统自动识别商品表、工资表和通用业务表，并分别显示核对结果。</p>
       </header>
 
       <div className="mb-6 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
